@@ -19,6 +19,7 @@ import { createBomb } from './bomb.js';
 import { createAudio } from './audio.js';
 import { createHud } from './hud.js';
 import { createMinimap } from './minimap.js';
+import { createStats } from './stats.js';
 
 const FIXED_STEP = 1 / 60;
 const params = new URLSearchParams(window.location.search);
@@ -51,6 +52,7 @@ const camera = new THREE.PerspectiveCamera(74, window.innerWidth / window.innerH
 scene.add(camera);
 
 const state = createState();
+const stats = createStats();
 const audio = createAudio();
 const map = createMap(scene);
 const hud = createHud();
@@ -77,6 +79,7 @@ const bots = createBots(scene, map, audio, {
   onBotKilled(bot) {
     state.money += KILL_REWARD;
     state.kills += 1;
+    stats.kill();
     hud.killfeed(`You dropped Raider ${bot.id + 1}  +$${KILL_REWARD}`);
     hud.setMoney(state.money, state.owned.grenades, state.owned.smokes);
   },
@@ -84,7 +87,10 @@ const bots = createBots(scene, map, audio, {
     hud.damageFlash();
     hud.setHealth(player.state.health);
     audio.hurt();
-    if (died) endRound(false, 'You are down — the Raiders take the dock.');
+    if (died) {
+      stats.death();
+      endRound(false, 'You are down — the Raiders take the dock.');
+    }
   },
   onBotPlant(bot) {
     if (bomb.state.state === 'idle') {
@@ -131,6 +137,7 @@ function refreshHud() {
 
 function startRound() {
   resetRound(state);
+  stats.roundStart(state.round);
   player.reset(map.playerSpawn.x, map.playerSpawn.z, map.playerSpawn.yaw);
   bots.reset();
   weapons.refillRound();
@@ -169,9 +176,15 @@ function endRound(win, reason) {
   state.roundResult = { win, reason };
   state.mode = 'roundEnd';
   if (win) audio.roundWin(); else audio.roundLose();
+  stats.roundEnd(win, earned);
   hud.setMoney(state.money, state.owned.grenades, state.owned.smokes);
   hud.setScore(state.scoreUs, state.scoreThem, state.round);
-  hud.showOverlay('roundEnd', { win, reason, earned, money: state.money, kills: state.kills });
+  hud.showOverlay('roundEnd', {
+    win, reason, earned, money: state.money, kills: state.kills,
+    roundLine: stats.roundLine(),
+    matchLine: stats.matchLine(),
+    bestLine: stats.bestLine(),
+  });
   input.exitLock();
 }
 
@@ -181,18 +194,21 @@ function onBuy(name) {
     if (state.money >= GRENADE_PRICE && state.owned.grenades < GRENADE_MAX) {
       state.money -= GRENADE_PRICE;
       state.owned.grenades += 1;
+      stats.spent(GRENADE_PRICE);
       audio.click();
     }
   } else if (name === 'smoke') {
     if (state.money >= SMOKE_PRICE && state.owned.smokes < SMOKE_MAX) {
       state.money -= SMOKE_PRICE;
       state.owned.smokes += 1;
+      stats.spent(SMOKE_PRICE);
       audio.click();
     }
   } else {
     const price = weapons.buy(name, state.money);
     if (price != null) {
       state.money -= price;
+      stats.spent(price);
       audio.click();
     }
   }
@@ -234,6 +250,7 @@ function fireShot() {
     }
     return;
   }
+  stats.shotFired();
   camera.getWorldDirection(dir);
   const spread = weapons.spread(player.groundSpeed(), player.state.crouching);
   dir.x += (random() - 0.5) * 2 * spread;
@@ -247,6 +264,7 @@ function fireShot() {
     const hitDist = hits[0].distance;
     // A smoke cloud between the muzzle and the target swallows the shot.
     if (grenades.rayBlocked(eyePos, dir, hitDist) < hitDist) {
+      stats.shotBlocked();
       player.recoil(s.recoilPitch, (random() - 0.5) * 2 * s.recoilYaw);
       const p = player.state;
       noise = { x: p.position.x, z: p.position.z, at: elapsed };
@@ -259,6 +277,7 @@ function fireShot() {
       const isHead = obj.userData.part === 'head';
       const dmg = s.damage * (isHead ? s.headMult : 1);
       const killed = bots.damage(bot, dmg);
+      stats.shotHit(isHead, dmg);
       if (killed) {
         audio.kill();
         hud.hitMarker(true, 140);
@@ -326,6 +345,7 @@ function step(dt) {
           camera.getWorldDirection(dir);
           eyePos.copy(camera.position);
           grenades.throwFrom(eyePos, dir, 13, 'he');
+          stats.thrown('he');
           hud.setMoney(state.money, state.owned.grenades, state.owned.smokes);
         }
       } else if (code === 'KeyH') {
@@ -334,6 +354,7 @@ function step(dt) {
           camera.getWorldDirection(dir);
           eyePos.copy(camera.position);
           grenades.throwFrom(eyePos, dir, 13, 'smoke');
+          stats.thrown('smoke');
           hud.setMoney(state.money, state.owned.grenades, state.owned.smokes);
         }
       }

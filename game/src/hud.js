@@ -161,7 +161,11 @@ export function createHud() {
       if (mode === 'roundEnd') {
         title.textContent = data.win ? 'SITE HELD' : 'SITE LOST';
         copy.textContent = data.reason;
-        stats.textContent = `Earned $${data.earned}  ·  Balance $${data.money}  ·  Kills ${data.kills}`;
+        const lines = [`Earned $${data.earned}  ·  Balance $${data.money}  ·  Kills ${data.kills}`];
+        if (data.roundLine) lines.push(data.roundLine);
+        if (data.matchLine) lines.push(data.matchLine);
+        if (data.bestLine) lines.push(data.bestLine);
+        stats.textContent = lines.join('\n');
         play.textContent = 'Next round';
       } else {
         const text = COPY[mode];
