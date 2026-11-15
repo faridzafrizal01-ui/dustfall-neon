@@ -1,15 +1,15 @@
-// NEONDOCK: a night neon container dockyard, 44 x 34 m. Two bomb sites (A Crane west,
-// B Pier east) behind a central quay wall that only opens at two gaps, a container
-// tower in the middle, and open alleys down both flanks. All geometry is boxes and
-// cylinders, all art is material colour plus neon strips. Waypoints form a graph the
-// bots navigate with BFS.
+// NEONDOCK map, rewritten fresh for threejs-fps-02. A night container dockyard,
+// 44 x 34 m, with two bomb sites behind a gated quay wall. The quay wall only
+// opens at two gaps; the flanks stay open as alleys. A container tower sits in
+// the middle and forces every approach around it. Bots walk a 32-node waypoint
+// graph with BFS. All art is box/cylinder geometry plus neon glow strips.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { makeBox } from './collide.js';
 
-const HALF_W = 22;
-const HALF_D = 17;
-const WALL_H = 4.5;
+const W = 22; // half width
+const D = 17; // half depth
+const WALL = 4.5; // outer wall height
 
 export const SITES = {
   A: { name: 'Crane', x: -16, z: -12, radius: 3.4, color: 'accent' },
@@ -24,33 +24,21 @@ export const BOT_SPAWNS = [
   { x: 14, z: 14.5, yaw: 0 },
 ];
 
-// Waypoint graph (x, z). Bots BFS a path from their nearest node to a site node.
-// Raiders spawn south in the staging yard, push north through the quay-wall gaps
-// or the flank alleys, around the container tower, to the sites; the Sentinel
-// spawns north, between the two sites, facing the approaches.
+// Waypoint graph. Bots BFS from their nearest node to a site node. Raiders come
+// from the south staging yard, through the quay-wall gaps or the flank alleys,
+// around the tower, to the sites. The Sentinel starts north, between the sites.
 const NODES = [
-  // 0..3 bot spawns (south yard)
-  [-14, 14.5], [-5, 14.5], [5, 14.5], [14, 14.5],
-  // 4..6 south yard
-  [-10, 10], [0, 11], [10, 10],
-  // 7..8 quay-wall gaps
-  [-5, 4], [5, 4],
-  // 9..11 tower ring
-  [-7, -3], [7, -3], [0, -9],
-  // 12..13 north approaches
-  [-9, -11], [9, -11],
-  // 14..16 west alley
-  [-20, -12], [-20, -4], [-20, 10],
-  // 17..19 east alley
-  [20, -12], [20, -4], [20, 10],
-  // 20 site A, 21 site B
-  [-16, -12], [16, -12],
-  // 22..25 connectors
-  [-10, -8], [10, -8], [-10, 8], [10, 8],
-  // 26..29 hold spots near the sites
-  [-13, -8], [-18, -14], [13, -8], [18, -14],
-  // 30..31 north edge
-  [-6, -14], [6, -14],
+  [-14, 14.5], [-5, 14.5], [5, 14.5], [14, 14.5], // 0-3 bot spawns
+  [-10, 10], [0, 11], [10, 10],                   // 4-6 south yard
+  [-5, 4], [5, 4],                                 // 7-8 quay-wall gaps
+  [-7, -3], [7, -3], [0, -9],                     // 9-11 tower ring
+  [-9, -11], [9, -11],                             // 12-13 north approaches
+  [-20, -12], [-20, -4], [-20, 10],               // 14-16 west alley
+  [20, -12], [20, -4], [20, 10],                  // 17-19 east alley
+  [-16, -12], [16, -12],                           // 20-21 sites A, B
+  [-10, -8], [10, -8], [-10, 8], [10, 8],         // 22-25 connectors
+  [-13, -8], [-18, -14], [13, -8], [18, -14],     // 26-29 hold spots
+  [-6, -14], [6, -14],                             // 30-31 north edge
 ];
 const EDGES = [
   [0, 4], [0, 16], [1, 5], [1, 4], [2, 5], [2, 6], [3, 6], [3, 19],
@@ -68,28 +56,31 @@ export const SITE_NODE = { A: 20, B: 21 };
 export const HOLD_NODES = { A: [26, 27, 22], B: [28, 29, 23] };
 
 export function createMap(scene) {
-  const group = new THREE.Group();
-  scene.add(group);
+  const root = new THREE.Group();
+  scene.add(root);
+
+  // One standard material per palette entry; neon glow is MeshBasic (unlit).
   const mats = {};
   for (const name of Object.keys(PALETTE)) {
     mats[name] = new THREE.MeshStandardMaterial({
       color: new THREE.Color(PALETTE[name]),
-      roughness: name === 'accent' || name === 'pink' || name === 'ink' ? 0.5 : 0.95,
+      roughness: (name === 'accent' || name === 'pink' || name === 'ink') ? 0.5 : 0.95,
       metalness: name === 'rust' ? 0.35 : 0.04,
     });
   }
-  // Neon strips glow on their own; they are not lit by the scene.
-  const neonCyan = new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.accent) });
-  const neonPink = new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.pink) });
+  const glowCyan = new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.accent) });
+  const glowPink = new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.pink) });
+  const glow = (kind) => (kind === 'pink' ? glowPink : glowCyan);
+
   const colliders = [];
   const shootables = [];
 
-  function box(w, h, d, x, y, z, mat, solid = true) {
+  function addBox(w, h, d, x, y, z, mat, solid = true) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mats[mat]);
     mesh.position.set(x, y, z);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    group.add(mesh);
+    root.add(mesh);
     if (solid) {
       colliders.push(makeBox(x, y, z, w, h, d));
       shootables.push(mesh);
@@ -97,103 +88,97 @@ export function createMap(scene) {
     return mesh;
   }
 
-  function strip(w, h, d, x, y, z, mat) {
+  function addGlow(w, h, d, x, y, z, kind) {
     // A neon strip: visual only, never a collider, never shootable.
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat === 'pink' ? neonPink : neonCyan);
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), glow(kind));
     mesh.position.set(x, y, z);
-    group.add(mesh);
+    root.add(mesh);
     return mesh;
   }
 
-  // Ground and outer walls.
-  const groundMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(HALF_W * 2 + 1.2, 0.4, HALF_D * 2 + 1.2),
+  // Ground slab and the four outer walls.
+  const ground = new THREE.Mesh(
+    new THREE.BoxGeometry(W * 2 + 1.2, 0.4, D * 2 + 1.2),
     new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.ground), roughness: 0.55, metalness: 0.15 }),
   );
-  groundMesh.position.set(0, -0.2, 0);
-  groundMesh.receiveShadow = true;
-  group.add(groundMesh);
-  box(0.6, WALL_H, HALF_D * 2 + 1.2, -HALF_W - 0.3, WALL_H / 2, 0, 'surface');
-  box(0.6, WALL_H, HALF_D * 2 + 1.2, HALF_W + 0.3, WALL_H / 2, 0, 'surface');
-  box(HALF_W * 2 + 1.2, WALL_H, 0.6, 0, WALL_H / 2, -HALF_D - 0.3, 'surface');
-  box(HALF_W * 2 + 1.2, WALL_H, 0.6, 0, WALL_H / 2, HALF_D + 0.3, 'surface');
+  ground.position.set(0, -0.2, 0);
+  ground.receiveShadow = true;
+  root.add(ground);
+  addBox(0.6, WALL, D * 2 + 1.2, -W - 0.3, WALL / 2, 0, 'surface');
+  addBox(0.6, WALL, D * 2 + 1.2, W + 0.3, WALL / 2, 0, 'surface');
+  addBox(W * 2 + 1.2, WALL, 0.6, 0, WALL / 2, -D - 0.3, 'surface');
+  addBox(W * 2 + 1.2, WALL, 0.6, 0, WALL / 2, D + 0.3, 'surface');
 
-  // Quay wall at z=4: three segments, two gaps at x -7..-3 and 3..7. The middle of
-  // the map is gated; the flank alleys stay open.
-  box(3, 3.2, 0.6, -8.5, 1.6, 4, 'surface');
-  box(6, 3.2, 0.6, 0, 1.6, 4, 'surface');
-  box(3, 3.2, 0.6, 8.5, 1.6, 4, 'surface');
-  // Neon trim along the quay wall.
-  strip(2.4, 0.14, 0.14, -8.5, 3.3, 4, 'accent');
-  strip(2.4, 0.14, 0.14, 0, 3.3, 4, 'pink');
-  strip(2.4, 0.14, 0.14, 8.5, 3.3, 4, 'accent');
+  // Quay wall at z = 4: three blocks, two gaps (x -7..-3 and 3..7). The middle
+  // of the map is gated; the flank alleys stay open.
+  addBox(3, 3.2, 0.6, -8.5, 1.6, 4, 'surface');
+  addBox(6, 3.2, 0.6, 0, 1.6, 4, 'surface');
+  addBox(3, 3.2, 0.6, 8.5, 1.6, 4, 'surface');
+  addGlow(2.4, 0.14, 0.14, -8.5, 3.3, 4, 'accent');
+  addGlow(2.4, 0.14, 0.14, 0, 3.3, 4, 'pink');
+  addGlow(2.4, 0.14, 0.14, 8.5, 3.3, 4, 'accent');
 
   // Central container tower: a two-tier stack the bots must walk around.
-  box(7, 2.4, 5, 0, 1.2, -3, 'rust');
-  box(5, 2.4, 3.5, 0, 3.6, -3, 'hairline');
-  strip(0.16, 4.4, 0.16, -3.4, 2.2, -0.4, 'pink');
-  strip(0.16, 4.4, 0.16, 3.4, 2.2, -0.4, 'accent');
+  addBox(7, 2.4, 5, 0, 1.2, -3, 'rust');
+  addBox(5, 2.4, 3.5, 0, 3.6, -3, 'hairline');
+  addGlow(0.16, 4.4, 0.16, -3.4, 2.2, -0.4, 'pink');
+  addGlow(0.16, 4.4, 0.16, 3.4, 2.2, -0.4, 'accent');
 
-  // Site A — the Crane: a tall mast in the north-west corner with a jib beam.
-  box(1.5, 8, 1.5, -20, 4, -14, 'surface');
-  strip(0.2, 7.2, 0.2, -20, 4, -13.2, 'accent');
+  // Site A — the Crane: a tall mast with a jib beam, plus containers and a crate.
+  addBox(1.5, 8, 1.5, -20, 4, -14, 'surface');
+  addGlow(0.2, 7.2, 0.2, -20, 4, -13.2, 'accent');
   const jib = new THREE.Mesh(new THREE.BoxGeometry(8, 0.5, 0.8), mats.hairline);
   jib.position.set(-16, 7.5, -14);
   jib.castShadow = true;
-  group.add(jib);
-  // Site A containers and crates.
-  box(2.5, 2.4, 1.2, -16.5, 1.2, -6, 'rust');
-  box(1.6, 1.1, 1.6, -14, 0.55, -9, 'hairline');
+  root.add(jib);
+  addBox(2.5, 2.4, 1.2, -16.5, 1.2, -6, 'rust');
+  addBox(1.6, 1.1, 1.6, -14, 0.55, -9, 'hairline');
 
   // Site B — the Pier: a stacked container pair and a crate.
-  box(3, 2.4, 1.2, 19, 1.2, -7, 'rust');
-  box(3, 2.4, 1.2, 18, 3.6, -7, 'hairline');
-  box(1.6, 1.1, 1.6, 14, 0.55, -9, 'hairline');
-  strip(2.6, 0.14, 0.14, 18.5, 2.5, -6.3, 'pink');
+  addBox(3, 2.4, 1.2, 19, 1.2, -7, 'rust');
+  addBox(3, 2.4, 1.2, 18, 3.6, -7, 'hairline');
+  addBox(1.6, 1.1, 1.6, 14, 0.55, -9, 'hairline');
+  addGlow(2.6, 0.14, 0.14, 18.5, 2.5, -6.3, 'pink');
 
-  // Low cover walls along the north edge and one south of the tower.
-  box(2.2, 1.1, 1.2, -6, 0.55, -15.5, 'hairline');
-  box(2.2, 1.1, 1.2, 6, 0.55, -15.5, 'hairline');
-  box(3.2, 1.1, 0.8, 0, 0.55, 1, 'hairline');
+  // Low cover: two walls on the north edge, one south of the tower.
+  addBox(2.2, 1.1, 1.2, -6, 0.55, -15.5, 'hairline');
+  addBox(2.2, 1.1, 1.2, 6, 0.55, -15.5, 'hairline');
+  addBox(3.2, 1.1, 0.8, 0, 0.55, 1, 'hairline');
 
-  // Staging-yard crates (south) and alley crates (off the lane lines).
-  box(1.6, 1.1, 1.6, -12, 0.55, 11, 'hairline');
-  box(1.6, 1.1, 1.6, 12, 0.55, 11, 'hairline');
-  box(2, 1.1, 2, -4, 0.55, 13, 'hairline');
-  box(2, 1.1, 2, 4, 0.55, 13, 'hairline');
-  box(1.6, 1.1, 1.6, -18, 0.55, 0, 'hairline');
-  box(1.6, 1.1, 1.6, 18, 0.55, 0, 'hairline');
+  // Crates in the staging yard (south) and in the alleys (off the lane lines).
+  addBox(1.6, 1.1, 1.6, -12, 0.55, 11, 'hairline');
+  addBox(1.6, 1.1, 1.6, 12, 0.55, 11, 'hairline');
+  addBox(2, 1.1, 2, -4, 0.55, 13, 'hairline');
+  addBox(2, 1.1, 2, 4, 0.55, 13, 'hairline');
+  addBox(1.6, 1.1, 1.6, -18, 0.55, 0, 'hairline');
+  addBox(1.6, 1.1, 1.6, 18, 0.55, 0, 'hairline');
 
   // Distant silhouettes outside the walls, for depth through the fog.
-  box(6, 9, 6, -30, 4.5, -8, 'canvas', false);
-  box(5, 7, 5, 30, 3.5, -14, 'canvas', false);
-  box(8, 12, 4, 4, 6, -30, 'canvas', false);
-  box(4, 6, 4, -34, 3, 10, 'canvas', false);
-  strip(5.8, 0.2, 0.2, -30, 9.1, -8, 'accent');
-  strip(4.8, 0.2, 0.2, 30, 7.1, -14, 'pink');
+  addBox(6, 9, 6, -30, 4.5, -8, 'canvas', false);
+  addBox(5, 7, 5, 30, 3.5, -14, 'canvas', false);
+  addBox(8, 12, 4, 4, 6, -30, 'canvas', false);
+  addBox(4, 6, 4, -34, 3, 10, 'canvas', false);
+  addGlow(5.8, 0.2, 0.2, -30, 9.1, -8, 'accent');
+  addGlow(4.8, 0.2, 0.2, 30, 7.1, -14, 'pink');
 
-  // Site markers: a flat ring on the ground and a translucent beacon pillar,
+  // Site markers: a flat ring on the ground plus a translucent beacon pillar,
   // cyan for A, magenta for B.
   for (const key of ['A', 'B']) {
     const s = SITES[key];
     const c = new THREE.Color(PALETTE[s.color]);
-    const zoneMat = new THREE.MeshBasicMaterial({
-      color: c, transparent: true, opacity: 0.28, depthWrite: false,
-    });
-    const pillarMat = new THREE.MeshBasicMaterial({
-      color: c, transparent: true, opacity: 0.07, depthWrite: false,
-    });
-    const ring = new THREE.Mesh(new THREE.CylinderGeometry(s.radius, s.radius, 0.06, 28), zoneMat);
+    const ringMat = new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.28, depthWrite: false });
+    const pillarMat = new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.07, depthWrite: false });
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(s.radius, s.radius, 0.06, 28), ringMat);
     ring.position.set(s.x, 0.03, s.z);
     ring.receiveShadow = true;
-    group.add(ring);
+    root.add(ring);
     const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 7, 12, 1, true), pillarMat);
     pillar.position.set(s.x, 3.5, s.z);
-    group.add(pillar);
+    root.add(pillar);
   }
 
-  // Light: a cold moon from the north-east, dim blue sky fill, and neon point
-  // lights at both sites and the tower so the night reads.
+  // Night lighting: a cold moon from the north-east, a dim blue sky fill, and
+  // neon point lights at both sites and the tower so the dark reads.
   const sky = new THREE.HemisphereLight(new THREE.Color('#2a3a5f'), new THREE.Color('#0e1424'), 0.7);
   scene.add(sky);
   const moon = new THREE.DirectionalLight(new THREE.Color('#8fb4ff'), 1.4);
@@ -221,7 +206,7 @@ export function createMap(scene) {
   lampTower.position.set(0, 4, -3);
   scene.add(lampTower);
 
-  // Waypoint adjacency.
+  // Waypoint adjacency list.
   const adj = NODES.map(() => []);
   for (const [a, b] of EDGES) {
     adj[a].push(b);
@@ -275,7 +260,7 @@ export function createMap(scene) {
   }
 
   return {
-    colliders, shootables, group,
+    colliders, shootables, group: root,
     sites: SITES,
     playerSpawn: PLAYER_SPAWN,
     botSpawns: BOT_SPAWNS,

@@ -1,9 +1,10 @@
-// Two grenades. The Spark HE grenade: thrown in an arc, bounces, then explodes after
-// a short fuse with area damage. The Vapor smoke grenade: thrown the same way, pops
-// into a cloud on its first impact (or when its fuse runs out) that hangs for twelve
-// seconds and blocks line of sight — bots cannot see through it, and neither can the
-// player's hitscan. One reusable explosion effect so the hot path allocates nothing;
-// a smoke cloud is built once, at deploy time, and only fades afterwards.
+// Two grenades, rewritten fresh for threejs-fps-02. The Spark HE grenade flies an
+// arc, bounces, and explodes after a short fuse with area damage. The Vapor smoke
+// grenade flies the same way, but pops into a cloud on its first impact (or when
+// its fuse runs out) that hangs for twelve seconds and blocks line of sight —
+// bots cannot see through it, and neither can the player's hitscan. One reusable
+// explosion effect so the hot path allocates nothing; a smoke cloud is built once
+// at deploy time and only fades afterwards.
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 
@@ -27,7 +28,7 @@ const PUFFS = [
 ];
 
 export function createGrenades(scene, colliders, audio) {
-  const active = [];
+  const live = [];
   const clouds = [];
   const ballGeo = new THREE.SphereGeometry(SPHERE_R, 10, 8);
   const ballMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.canvas), roughness: 0.4, metalness: 0.5 });
@@ -37,13 +38,13 @@ export function createGrenades(scene, colliders, audio) {
   const shell = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), shellMat);
   shell.visible = false;
   scene.add(shell);
-  const light = new THREE.PointLight(new THREE.Color(PALETTE.accent), 0, 18);
-  scene.add(light);
-  let fxTime = 0;
-  let fxPos = new THREE.Vector3();
+  const flash = new THREE.PointLight(new THREE.Color(PALETTE.accent), 0, 18);
+  scene.add(flash);
+  let fxLeft = 0;
+  const fxPos = new THREE.Vector3();
 
-  const tmp = new THREE.Vector3();
-  const closest = new THREE.Vector3();
+  const tmpV = new THREE.Vector3();
+  const nearV = new THREE.Vector3();
   const puffGeo = new THREE.SphereGeometry(1, 12, 10);
 
   function throwFrom(origin, dir, speed = 13, kind = 'he') {
@@ -51,7 +52,7 @@ export function createGrenades(scene, colliders, audio) {
     mesh.position.copy(origin);
     mesh.castShadow = true;
     scene.add(mesh);
-    active.push({
+    live.push({
       mesh, kind,
       vel: new THREE.Vector3(dir.x * speed, dir.y * speed + 2.2, dir.z * speed),
       fuse: FUSE,
@@ -82,11 +83,11 @@ export function createGrenades(scene, colliders, audio) {
   function explode(g, now, damageFn) {
     const pos = g.mesh.position;
     fxPos.copy(pos);
-    fxTime = 0.45;
+    fxLeft = 0.45;
     shell.position.copy(pos);
     shell.visible = true;
-    light.position.copy(pos);
-    light.intensity = 60;
+    flash.position.copy(pos);
+    flash.intensity = 60;
     audio.explosion();
     damageFn(pos, RADIUS, MAX_DAMAGE, MIN_DAMAGE);
     scene.remove(g.mesh);
@@ -150,14 +151,14 @@ export function createGrenades(scene, colliders, audio) {
   }
 
   function step(dt, now, damageFn) {
-    // Explosion effect.
-    if (fxTime > 0) {
-      fxTime -= dt;
-      const t = 1 - fxTime / 0.45;
+    // Explosion flash: expand the shell, fade the light.
+    if (fxLeft > 0) {
+      fxLeft -= dt;
+      const t = 1 - fxLeft / 0.45;
       shell.scale.setScalar(0.5 + t * RADIUS);
       shellMat.opacity = 0.8 * (1 - t);
-      light.intensity = 60 * (1 - t);
-      if (fxTime <= 0) { shell.visible = false; light.intensity = 0; }
+      flash.intensity = 60 * (1 - t);
+      if (fxLeft <= 0) { shell.visible = false; flash.intensity = 0; }
     }
     // Smoke clouds: fade in, hold, fade out, then remove.
     for (let i = clouds.length - 1; i >= 0; i -= 1) {
@@ -171,8 +172,8 @@ export function createGrenades(scene, colliders, audio) {
       const grow = 1 + 0.15 * Math.min(1, age / 3);
       cloud.group.scale.setScalar(grow);
     }
-    for (let i = active.length - 1; i >= 0; i -= 1) {
-      const g = active[i];
+    for (let i = live.length - 1; i >= 0; i -= 1) {
+      const g = live[i];
       g.fuse -= dt;
       g.vel.y -= GRAVITY * dt;
       g.mesh.position.addScaledVector(g.vel, dt);
@@ -190,20 +191,20 @@ export function createGrenades(scene, colliders, audio) {
       // Box bounce: push out along the smallest penetration and reflect.
       for (let j = 0; j < colliders.length; j += 1) {
         const b = colliders[j];
-        closest.set(
+        nearV.set(
           Math.max(b.min.x, Math.min(p.x, b.max.x)),
           Math.max(b.min.y, Math.min(p.y, b.max.y)),
           Math.max(b.min.z, Math.min(p.z, b.max.z)),
         );
-        tmp.subVectors(p, closest);
-        const d2 = tmp.lengthSq();
+        tmpV.subVectors(p, nearV);
+        const d2 = tmpV.lengthSq();
         if (d2 < SPHERE_R * SPHERE_R && d2 > 1e-8) {
           const d = Math.sqrt(d2);
-          tmp.multiplyScalar(1 / d);
-          p.copy(closest).addScaledVector(tmp, SPHERE_R);
-          const vn = g.vel.dot(tmp);
+          tmpV.multiplyScalar(1 / d);
+          p.copy(nearV).addScaledVector(tmpV, SPHERE_R);
+          const vn = g.vel.dot(tmpV);
           if (vn < 0) {
-            g.vel.addScaledVector(tmp, -vn * (1 + BOUNCE));
+            g.vel.addScaledVector(tmpV, -vn * (1 + BOUNCE));
             g.vel.multiplyScalar(0.85);
             if (now - g.bouncedAt > 0.15) { audio.bounce(); g.bouncedAt = now; }
             if (g.kind === 'smoke') popped = true;
@@ -213,10 +214,10 @@ export function createGrenades(scene, colliders, audio) {
       if (g.kind === 'smoke' && (popped || g.fuse <= 0)) {
         spawnCloud(p, now);
         scene.remove(g.mesh);
-        active.splice(i, 1);
+        live.splice(i, 1);
       } else if (g.kind === 'he' && g.fuse <= 0) {
         explode(g, now, damageFn);
-        active.splice(i, 1);
+        live.splice(i, 1);
       }
     }
   }
@@ -227,15 +228,15 @@ export function createGrenades(scene, colliders, audio) {
     blocksSight,
     rayBlocked,
     step,
-    count() { return active.length; },
+    count() { return live.length; },
     cloudCount() { return clouds.length; },
     clear() {
-      for (const g of active) scene.remove(g.mesh);
-      active.length = 0;
+      for (const g of live) scene.remove(g.mesh);
+      live.length = 0;
       for (let i = clouds.length - 1; i >= 0; i -= 1) removeCloud(i);
       shell.visible = false;
-      light.intensity = 0;
-      fxTime = 0;
+      flash.intensity = 0;
+      fxLeft = 0;
     },
   };
 }
