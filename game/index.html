@@ -78,6 +78,9 @@
   #score .us { color: var(--us); }
   #score .them { color: var(--them); }
   #bomb-status { margin-top: 6px; font-size: 13px; letter-spacing: .1em; padding: 4px 10px; border-radius: 4px; display: inline-block; }
+
+  /* Minimap: top-left corner, a live top-down view of the dockyard. */
+  #minimap { position: fixed; left: 32px; top: 20px; width: 180px; height: 140px; border-radius: var(--radius-panel); }
   #bomb-status[hidden] { display: none; }
   #bomb-status.bomb-warn { background: rgba(53, 224, 255, .2); color: var(--accent); }
   #bomb-status.bomb-danger { background: rgba(255, 77, 94, .25); color: var(--bad); }
@@ -141,6 +144,7 @@
     <div id="score"><span class="us">SENTINELS</span> <b id="score-value">0 — 0</b> <span class="them">RAIDERS</span> · <span id="round-value">ROUND 1</span></div>
     <div id="bomb-status" hidden><span id="bomb-text"></span></div>
   </div>
+  <canvas id="minimap" width="180" height="140"></canvas>
   <div id="killfeed"></div>
   <div id="health">
     <div class="row"><span id="health-num">100</span><span id="health-label">HEALTH</span></div>

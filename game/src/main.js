@@ -18,6 +18,7 @@ import { createBots } from './bots.js';
 import { createBomb } from './bomb.js';
 import { createAudio } from './audio.js';
 import { createHud } from './hud.js';
+import { createMinimap } from './minimap.js';
 
 const FIXED_STEP = 1 / 60;
 const params = new URLSearchParams(window.location.search);
@@ -53,6 +54,7 @@ const state = createState();
 const audio = createAudio();
 const map = createMap(scene);
 const hud = createHud();
+const minimap = createMinimap(document.getElementById('minimap'), map, PALETTE);
 const player = createPlayer(map.colliders);
 const weapons = createWeapons(camera, audio);
 const grenades = createGrenades(scene, map.colliders, audio);
@@ -422,6 +424,7 @@ syncCamera();
 
 function render() {
   renderer.render(scene, camera);
+  minimap.update(player.state, bots.bots, grenades.clouds(), bomb.state, elapsed);
 }
 
 window.addEventListener('resize', () => {

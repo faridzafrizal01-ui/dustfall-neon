@@ -230,6 +230,10 @@ export function createGrenades(scene, colliders, audio) {
     step,
     count() { return live.length; },
     cloudCount() { return clouds.length; },
+    // Live smoke clouds as plain {x, z} points, for the minimap and the HUD.
+    clouds() {
+      return clouds.map((c) => ({ x: c.pos.x, z: c.pos.z }));
+    },
     clear() {
       for (const g of live) scene.remove(g.mesh);
       live.length = 0;
